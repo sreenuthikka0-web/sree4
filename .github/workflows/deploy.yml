@@ -1,0 +1,58 @@
+name: Deploy to AWS S3 + CloudFront
+
+on:
+  push:
+    branches:
+      - main          # triggers on every push to main
+  workflow_dispatch:  # allows manual trigger from GitHub UI
+
+env:
+  AWS_REGION: us-east-1                          # change to your preferred region
+  S3_BUCKET: ${{ secrets.S3_BUCKET_NAME }}
+  CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout source code ──────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Configure AWS credentials ─────────────────────────────────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      # ── 3. Sync files to S3 ───────────────────────────────────────────────────
+      #    --delete removes files in S3 that are no longer in the repo
+      - name: Upload to S3
+        run: |
+          aws s3 sync . s3://${{ env.S3_BUCKET }} \
+            --exclude ".git/*" \
+            --exclude ".github/*" \
+            --exclude "infra/*" \
+            --exclude "*.md" \
+            --delete \
+            --cache-control "max-age=86400"
+
+      # ── 4. Invalidate CloudFront cache so changes are visible immediately ─────
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ env.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
+
+      # ── 5. Print the live URL ─────────────────────────────────────────────────
+      - name: Deployment complete
+        run: |
+          echo "✅ Deployment successful!"
+          echo "🌐 Your site is live at: https://$(aws cloudfront get-distribution \
+            --id ${{ env.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --query 'Distribution.DomainName' \
+            --output text)"
